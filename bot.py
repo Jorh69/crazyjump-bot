@@ -201,8 +201,8 @@ def webhook_info():
     })
 
 @app.route('/webhook', methods=['POST'])
-def webhook():
-    """Основной обработчик вебхука"""
+def handle_webhook():
+    """Единственный обработчик вебхука"""
     if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
         logger.info(f"Incoming update: {json_string[:500]}...")
