@@ -86,10 +86,7 @@ class Database:
             cursor.execute('PRAGMA journal_mode=WAL')
             cursor.execute('PRAGMA busy_timeout=5000')
 
-            # Проверяем существование таблиц и столбцов
-            cursor.execute("PRAGMA table_info(users)")
-            columns = [column[1] for column in cursor.fetchall()]
-            
+            # Создаем таблицы, если их нет
             tables = [
                 """CREATE TABLE IF NOT EXISTS users (
                     user_id INTEGER PRIMARY KEY,
@@ -154,27 +151,18 @@ class Database:
                 )"""
             ]
 
-            indexes = [
-                "CREATE INDEX IF NOT EXISTS idx_users_join_date ON users(join_date)",
-                "CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status)",
-                "CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status)",
-                "CREATE INDEX IF NOT EXISTS idx_subscriptions_expires ON subscriptions(expires_at)",
-                "CREATE INDEX IF NOT EXISTS idx_schedule_date ON schedule(date)",
-                "CREATE INDEX IF NOT EXISTS idx_schedule_location ON schedule(location)"
-            ]
-
             for table in tables:
                 cursor.execute(table)
+
+            # Проверяем существование колонки перед добавлением
+            cursor.execute("PRAGMA table_info(users)")
+            columns = [column[1] for column in cursor.fetchall()]
             
             if 'reminders_enabled' not in columns:
                 cursor.execute("ALTER TABLE users ADD COLUMN reminders_enabled INTEGER DEFAULT 1")
                 logger.info("Added missing column 'reminders_enabled' to users table")
             
-            for index in indexes:
-                cursor.execute(index)
-
             self.conn.commit()
-            self.last_backup_time = None
             logger.info("Database initialized successfully")
         except sqlite3.Error as e:
             logger.error(f"Database initialization error: {e}")
@@ -207,35 +195,9 @@ class Database:
         try:
             with sqlite3.connect(filename) as new_conn:
                 self.conn.backup(new_conn)
-            self.last_backup_time = datetime.now(TIMEZONE)
             return True
         except sqlite3.Error as e:
             logger.error(f"Backup error: {e}")
-            return False
-        except Exception as e:
-            logger.error(f"Unexpected backup error: {e}")
-            return False
-
-    def check_integrity(self):
-        try:
-            result = self.execute("PRAGMA integrity_check", fetchone=True)
-            if result and result[0] == 'ok':
-                logger.info("Database integrity check passed")
-                return True
-            logger.error(f"Database integrity check failed: {result}")
-            return False
-        except Exception as e:
-            logger.error(f"Integrity check failed: {e}")
-            return False
-
-    def reconnect(self):
-        try:
-            if self.conn:
-                self.conn.close()
-            self.init_db()
-            return True
-        except Exception as e:
-            logger.error(f"Reconnection failed: {e}")
             return False
 
 db = Database()
@@ -503,8 +465,6 @@ def start_background_tasks():
     logger.info("Background tasks started")
 
 if __name__ == '__main__':
-    start_background_tasks()
-    
     if WEBHOOK_URL:
         run_webhook()
         app.run(host='0.0.0.0', port=PORT)
