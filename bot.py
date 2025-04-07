@@ -18,7 +18,7 @@ import csv
 import io
 from typing import Optional
 import calendar
-from flask import Flask, request
+from flask import Flask, request, jsonify
 
 # Инициализация Flask приложения
 app = Flask(__name__)
@@ -44,11 +44,16 @@ TIMEZONE = pytz.timezone('Europe/Moscow')
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 WEBHOOK_PORT = os.getenv('PORT', '10000')
 
+# Проверка обязательных переменных
+if not TOKEN or not ADMIN_ID or not WEBHOOK_URL:
+    logger.error("Не хватает обязательных переменных окружения!")
+    sys.exit(1)
+
 # Банковские реквизиты
 BANK_DETAILS = {
-    'bank_name': os.getenv('BANK_NAME'),
-    'recipient': os.getenv('BANK_RECIPIENT'),
-    'phone': os.getenv('BANK_PHONE')
+    'bank_name': os.getenv('BANK_NAME', 'Сбербанк'),
+    'recipient': os.getenv('BANK_RECIPIENT', 'Иванов Иван Иванович'),
+    'phone': os.getenv('BANK_PHONE', '+79001234567')
 }
 
 # Локации для занятий
@@ -86,7 +91,6 @@ class Database:
             cursor.execute('PRAGMA journal_mode=WAL')
             cursor.execute('PRAGMA busy_timeout=5000')
 
-            # Проверяем существование таблиц
             tables = [
                 """CREATE TABLE IF NOT EXISTS users (
                     user_id INTEGER PRIMARY KEY,
@@ -151,42 +155,15 @@ class Database:
                 )"""
             ]
 
-            indexes = [
-                "CREATE INDEX IF NOT EXISTS idx_users_join_date ON users(join_date)",
-                "CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status)",
-                "CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status)",
-                "CREATE INDEX IF NOT EXISTS idx_subscriptions_expires ON subscriptions(expires_at)",
-                "CREATE INDEX IF NOT EXISTS idx_schedule_date ON schedule(date)",
-                "CREATE INDEX IF NOT EXISTS idx_schedule_location ON schedule(location)"
-            ]
-
             for table in tables:
                 cursor.execute(table)
             
-            # Проверяем и добавляем недостающие колонки
-            cursor.execute("PRAGMA table_info(users)")
-            columns = [column[1] for column in cursor.fetchall()]
-            
-            if 'reminders_enabled' not in columns:
-                cursor.execute("ALTER TABLE users ADD COLUMN reminders_enabled INTEGER DEFAULT 1")
-                logger.info("Added missing column 'reminders_enabled' to users table")
-            
-            for index in indexes:
-                cursor.execute(index)
-
             self.conn.commit()
-            self.last_backup_time = None
             logger.info("Database initialized successfully")
-        except sqlite3.Error as e:
-            self.conn.rollback()
+        except Exception as e:
             logger.error(f"Database error: {e}")
             raise
-        except Exception as e:
-            self.conn.rollback()
-            logger.error(f"Unexpected DB error: {e}")
-            raise
 
-    # Остальные методы класса Database остаются без изменений
     def execute(self, query: str, params=(), fetchone=False, fetchall=False):
         cursor = None
         try:
@@ -203,39 +180,111 @@ class Database:
             if cursor:
                 cursor.close()
 
-    def backup_to_file(self, filename: str) -> bool:
-        try:
-            with sqlite3.connect(filename) as new_conn:
-                self.conn.backup(new_conn)
-            self.last_backup_time = datetime.now(TIMEZONE)
-            return True
-        except sqlite3.Error as e:
-            logger.error(f"Backup error: {e}")
-            return False
-
-    def check_integrity(self):
-        try:
-            result = self.execute("PRAGMA integrity_check", fetchone=True)
-            if result and result[0] == 'ok':
-                logger.info("Database integrity check passed")
-                return True
-            logger.error(f"Database integrity check failed: {result}")
-            return False
-        except Exception as e:
-            logger.error(f"Integrity check failed: {e}")
-            return False
-
-    def reconnect(self):
-        try:
-            if self.conn:
-                self.conn.close()
-            self.init_db()
-            return True
-        except Exception as e:
-            logger.error(f"Reconnection failed: {e}")
-            return False
-
 db = Database()
+
+# =============================================
+# ДИАГНОСТИЧЕСКИЕ ЭНДПОИНТЫ
+# =============================================
+@app.route('/ping')
+def ping():
+    """Проверка доступности сервера"""
+    return jsonify({"status": "ok", "time": datetime.now(TIMEZONE).isoformat()})
+
+@app.route('/webhook_info')
+def webhook_info():
+    """Информация о вебхуке"""
+    info = bot.get_webhook_info()
+    return jsonify({
+        "url": info.url,
+        "pending_updates": info.pending_update_count,
+        "last_error": info.last_error_message
+    })
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """Основной обработчик вебхука"""
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        logger.info(f"Incoming update: {json_string[:500]}...")
+        
+        try:
+            update = types.Update.de_json(json_string)
+            bot.process_new_updates([update])
+            return ''
+        except Exception as e:
+            logger.error(f"Error processing update: {e}")
+            return 'Internal server error', 500
+    return 'Bad request', 400
+
+# =============================================
+# ДИАГНОСТИЧЕСКИЕ КОМАНДЫ
+# =============================================
+@bot.message_handler(commands=['ping'])
+def handle_ping(message):
+    """Проверка связи с ботом"""
+    bot.reply_to(message, "🏓 Понг! Бот работает исправно.")
+
+@bot.message_handler(commands=['debug'])
+def handle_debug(message):
+    """Информация для отладки (только для админа)"""
+    if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "⛔ Доступ запрещен")
+        return
+    
+    info = {
+        "bot": bot.get_me().to_dict(),
+        "webhook": bot.get_webhook_info().to_dict(),
+        "db_status": "ok" if db.check_integrity() else "error",
+        "server_time": datetime.now(TIMEZONE).isoformat()
+    }
+    bot.reply_to(message, f"ℹ️ Debug info:\n<code>{info}</code>")
+
+# =============================================
+# ОСНОВНЫЕ ОБРАБОТЧИКИ КОМАНД
+# =============================================
+@bot.message_handler(commands=['start', 'help'])
+def send_welcome(message):
+    """Обработчик команд /start и /help"""
+    try:
+        user_id = message.from_user.id
+        now = datetime.now(TIMEZONE).isoformat()
+
+        logger.info(f"New user: {user_id} - @{message.from_user.username}")
+
+        if not db.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,), fetchone=True):
+            db.execute(
+                """INSERT INTO users 
+                (user_id, username, first_name, last_name, join_date, last_activity) 
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                (user_id, message.from_user.username, message.from_user.first_name,
+                 message.from_user.last_name or "", now, now)
+            )
+            logger.info(f"User {user_id} registered in database")
+
+        welcome_text = (
+            "<b>🏆 Добро пожаловать в CrazyJump!</b>\n\n"
+            "Выберите действие из меню ниже или воспользуйтесь командами:\n"
+            "/start - перезапустить бота\n"
+            "/help - получить справку\n"
+            "/ping - проверить работу бота"
+        )
+        
+        bot.send_message(
+            message.chat.id,
+            welcome_text,
+            reply_markup=types.ReplyKeyboardMarkup(
+                keyboard=[
+                    [types.KeyboardButton("💳 Купить абонемент")],
+                    [types.KeyboardButton("📋 Мои абонементы"), types.KeyboardButton("🏋️ Записаться")],
+                    [types.KeyboardButton("⚙️ Настройки"), types.KeyboardButton("❓ Помощь")]
+                ],
+                resize_keyboard=True
+            )
+        )
+    except Exception as e:
+        logger.error(f"Error in welcome handler: {e}")
+        bot.reply_to(message, "⚠️ Произошла ошибка. Пожалуйста, попробуйте позже.")
+
 
 class TelegramBackup:
     def __init__(self, bot: telebot.TeleBot, chat_id: str):
@@ -262,23 +311,17 @@ class TelegramBackup:
 
 backup = TelegramBackup(bot, BACKUP_CHAT_ID)
 
+# Декораторы и вспомогательные функции остаются без изменений
 def admin_required(func):
     @wraps(func)
     def wrapped(*args, **kwargs):
         try:
-            if isinstance(args[0], types.Message):
-                user_id = args[0].from_user.id
-                message = args[0]
-            elif isinstance(args[0], types.CallbackQuery):
-                user_id = args[0].from_user.id
-                message = args[0].message
-            else:
-                raise ValueError("Invalid argument type")
-
+            message = args[0].message if isinstance(args[0], types.CallbackQuery) else args[0]
+            user_id = args[0].from_user.id
+            
             if user_id == ADMIN_ID:
                 return func(*args, **kwargs)
-            else:
-                bot.reply_to(message, "⛔ Доступ запрещен")
+            bot.reply_to(message, "⛔ Доступ запрещен")
         except Exception as e:
             logger.error(f"Admin check error: {e}")
     return wrapped
@@ -287,19 +330,12 @@ def trainer_required(func):
     @wraps(func)
     def wrapped(*args, **kwargs):
         try:
-            if isinstance(args[0], types.Message):
-                user_id = args[0].from_user.id
-                message = args[0]
-            elif isinstance(args[0], types.CallbackQuery):
-                user_id = args[0].from_user.id
-                message = args[0].message
-            else:
-                raise ValueError("Invalid argument type")
-
+            message = args[0].message if isinstance(args[0], types.CallbackQuery) else args[0]
+            user_id = args[0].from_user.id
+            
             if db.execute("SELECT 1 FROM trainers WHERE trainer_id = ?", (user_id,), fetchone=True):
                 return func(*args, **kwargs)
-            else:
-                bot.reply_to(message, "⛔ Доступ разрешен только тренерам")
+            bot.reply_to(message, "⛔ Доступ разрешен только тренерам")
         except Exception as e:
             logger.error(f"Trainer check error: {e}")
     return wrapped
@@ -1585,43 +1621,64 @@ def send_reminders():
             logger.error(f"Reminders error: {e}")
             time.sleep(3600)
 
-def set_webhook():
-    try:
-        bot.remove_webhook()
-        time.sleep(1)
-        bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
-        logger.info(f"Webhook set to: {WEBHOOK_URL}/webhook")
-    except Exception as e:
-        logger.error(f"Error setting webhook: {e}")
+def setup_webhook():
+    """Настройка вебхука с повторными попытками"""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            bot.remove_webhook()
+            time.sleep(1)
+            webhook_url = f"{WEBHOOK_URL}/webhook"
+            bot.set_webhook(
+                url=webhook_url,
+                certificate=open('webhook_cert.pem', 'r') if os.path.exists('webhook_cert.pem') else None
+            )
+            logger.info(f"Webhook successfully set to: {webhook_url}")
+            return True
+        except Exception as e:
+            logger.error(f"Attempt {attempt + 1} failed to set webhook: {e}")
+            if attempt == max_retries - 1:
+                logger.critical("Failed to set webhook after all attempts")
+                return False
+            time.sleep(5)
 
 def start_background_tasks():
+    """Запуск фоновых задач"""
+    if not all([TOKEN, ADMIN_ID, WEBHOOK_URL]):
+        logger.error("Required environment variables are missing!")
+        return
+
+    # Запускаем проверку подписок и напоминания в отдельных потоках
     threading.Thread(target=check_subscriptions, daemon=True).start()
     threading.Thread(target=send_reminders, daemon=True).start()
     logger.info("Background tasks started")
 
-def run_flask():
-    app.run(host='0.0.0.0', port=WEBHOOK_PORT)
-
 if __name__ == '__main__':
     try:
+        logger.info("Starting bot initialization...")
+        
         # Инициализация базы данных
         db = Database()
         
-        # Запуск фоновых задач
-        threading.Thread(target=check_subscriptions, daemon=True).start()
-        threading.Thread(target=send_reminders, daemon=True).start()
-        logger.info("Background tasks started")
-        
         # Настройка вебхука
-        bot.remove_webhook()
-        time.sleep(1)
-        bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
-        logger.info(f"Webhook set to: {WEBHOOK_URL}/webhook")
+        if not setup_webhook():
+            logger.error("Failed to set webhook, switching to polling")
+            bot.remove_webhook()
+            bot.infinity_polling()
+            sys.exit(0)
+        
+        # Запуск фоновых задач
+        start_background_tasks()
         
         # Запуск Flask приложения
-        logger.info("Starting Flask app...")
-        app.run(host='0.0.0.0', port=WEBHOOK_PORT)
+        logger.info(f"Starting Flask app on port {WEBHOOK_PORT}")
+        app.run(
+            host='0.0.0.0',
+            port=int(WEBHOOK_PORT),
+            debug=False,
+            use_reloader=False
+        )
         
     except Exception as e:
-        logger.critical(f"Fatal error: {e}")
+        logger.critical(f"Fatal error during startup: {e}")
         sys.exit(1)
