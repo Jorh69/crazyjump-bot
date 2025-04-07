@@ -41,8 +41,8 @@ TOKEN = os.getenv('TELEGRAM_TOKEN')
 ADMIN_ID = int(os.getenv('ADMIN_ID'))
 BACKUP_CHAT_ID = os.getenv('BACKUP_CHAT_ID')
 TIMEZONE = pytz.timezone('Europe/Moscow')
-WEBHOOK_URL = os.getenv('WEBHOOK_URL')  # URL вашего приложения на Render
-WEBHOOK_PORT = os.getenv('PORT', '10000')  # Render использует порт из env
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')
+WEBHOOK_PORT = os.getenv('PORT', '10000')
 
 # Банковские реквизиты
 BANK_DETAILS = {
@@ -86,10 +86,7 @@ class Database:
             cursor.execute('PRAGMA journal_mode=WAL')
             cursor.execute('PRAGMA busy_timeout=5000')
 
-            # Проверяем существование таблиц и столбцов
-            cursor.execute("PRAGMA table_info(users)")
-            columns = [column[1] for column in cursor.fetchall()]
-            
+            # Проверяем существование таблиц
             tables = [
                 """CREATE TABLE IF NOT EXISTS users (
                     user_id INTEGER PRIMARY KEY,
@@ -166,6 +163,10 @@ class Database:
             for table in tables:
                 cursor.execute(table)
             
+            # Проверяем и добавляем недостающие колонки
+            cursor.execute("PRAGMA table_info(users)")
+            columns = [column[1] for column in cursor.fetchall()]
+            
             if 'reminders_enabled' not in columns:
                 cursor.execute("ALTER TABLE users ADD COLUMN reminders_enabled INTEGER DEFAULT 1")
                 logger.info("Added missing column 'reminders_enabled' to users table")
@@ -177,12 +178,15 @@ class Database:
             self.last_backup_time = None
             logger.info("Database initialized successfully")
         except sqlite3.Error as e:
-            logger.error(f"Database initialization error: {e}")
+            self.conn.rollback()
+            logger.error(f"Database error: {e}")
             raise
         except Exception as e:
-            logger.error(f"Unexpected error during DB init: {e}")
+            self.conn.rollback()
+            logger.error(f"Unexpected DB error: {e}")
             raise
 
+    # Остальные методы класса Database остаются без изменений
     def execute(self, query: str, params=(), fetchone=False, fetchall=False):
         cursor = None
         try:
@@ -194,10 +198,6 @@ class Database:
         except sqlite3.Error as e:
             self.conn.rollback()
             logger.error(f"Database error: {e}")
-            raise
-        except Exception as e:
-            self.conn.rollback()
-            logger.error(f"Unexpected DB error: {e}")
             raise
         finally:
             if cursor:
@@ -211,9 +211,6 @@ class Database:
             return True
         except sqlite3.Error as e:
             logger.error(f"Backup error: {e}")
-            return False
-        except Exception as e:
-            logger.error(f"Unexpected backup error: {e}")
             return False
 
     def check_integrity(self):
@@ -1611,14 +1608,19 @@ if __name__ == '__main__':
         db = Database()
         
         # Запуск фоновых задач
-        start_background_tasks()
+        threading.Thread(target=check_subscriptions, daemon=True).start()
+        threading.Thread(target=send_reminders, daemon=True).start()
+        logger.info("Background tasks started")
         
         # Настройка вебхука
-        set_webhook()
+        bot.remove_webhook()
+        time.sleep(1)
+        bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+        logger.info(f"Webhook set to: {WEBHOOK_URL}/webhook")
         
         # Запуск Flask приложения
         logger.info("Starting Flask app...")
-        run_flask()
+        app.run(host='0.0.0.0', port=WEBHOOK_PORT)
         
     except Exception as e:
         logger.critical(f"Fatal error: {e}")
