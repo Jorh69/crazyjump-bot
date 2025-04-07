@@ -1,4 +1,4 @@
-вот код моего бота:import os
+import os
 import sqlite3
 import logging
 from datetime import datetime, timedelta
