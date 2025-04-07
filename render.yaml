@@ -3,4 +3,7 @@ services:
     name: crazyjump-bot
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn bot:app -b :$PORT
+    startCommand: gunicorn bot:app
+    envVars:
+      - key: PORT
+        value: 10000
