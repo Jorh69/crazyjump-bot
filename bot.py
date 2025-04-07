@@ -1616,7 +1616,7 @@ if __name__ == '__main__':
         bot.remove_webhook()
         time.sleep(1)
         bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
-        logger.info(f"Webhook set to: {WEBHOOK_URL}/webhook")
+        logger.info(f"Incoming update: {request.get_data().decode('utf-8')}")
         
         # Запуск Flask приложения
         logger.info("Starting Flask app...")
