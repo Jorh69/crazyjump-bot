@@ -1404,14 +1404,14 @@ def back_to_dates(call: types.CallbackQuery):
                 f"Выберите дату для локации {location}:",
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                reply_markup=get_dates_keyboard(location))
+                reply_markup=get_dates_keyboard(location)
             )
         except Exception as e:
             logger.warning(f"Couldn't edit message, sending new: {e}")
             bot.send_message(
                 call.message.chat.id,
                 f"Выберите дату для локации {location}:",
-                reply_markup=get_dates_keyboard(location))
+                reply_markup=get_dates_keyboard(location)
             )
     except Exception as e:
         logger.error(f"Error returning to dates: {e}")
