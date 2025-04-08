@@ -12,7 +12,7 @@ PORT = int(os.getenv("PORT", 10000))
 
 # Настройка логгирования
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(name)
+logger = logging.getLogger(__name__)
 
 app = Flask(name)
 bot = TeleBot(TOKEN, parse_mode='HTML')
