@@ -13,7 +13,7 @@ PORT = int(os.getenv("PORT", 10000))
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("bot")
 
-app = Flask(name)
+app = Flask(__name__)
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 
 @bot.message_handler(commands=["start"])
@@ -42,6 +42,6 @@ def set_webhook():
     bot.set_webhook(url)
     logger.info(f"Webhook установлен на {url}")
 
-if name == "main":
+if __name__ == "__main__":
     set_webhook()
     app.run(host="0.0.0.0", port=PORT)
