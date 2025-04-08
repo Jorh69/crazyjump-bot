@@ -180,6 +180,22 @@ class Database:
             if cursor:
                 cursor.close()
 
+    def check_integrity(self):
+        try:
+            result = self.execute("PRAGMA integrity_check", fetchone=True)
+            return result[0] == "ok"
+        except:
+            return False
+
+    def reconnect(self):
+        try:
+            self.conn.close()
+            self.init_db()
+            return True
+        except Exception as e:
+            logger.error(f"Reconnect failed: {e}")
+            return False
+
 db = Database()
 
 # =============================================
@@ -285,7 +301,6 @@ def send_welcome(message):
         logger.error(f"Error in welcome handler: {e}")
         bot.reply_to(message, "⚠️ Произошла ошибка. Пожалуйста, попробуйте позже.")
 
-
 class TelegramBackup:
     def __init__(self, bot: telebot.TeleBot, chat_id: str):
         self.bot = bot
@@ -311,7 +326,7 @@ class TelegramBackup:
 
 backup = TelegramBackup(bot, BACKUP_CHAT_ID)
 
-# Декораторы и вспомогательные функции остаются без изменений
+# Декораторы и вспомогательные функции
 def admin_required(func):
     @wraps(func)
     def wrapped(*args, **kwargs):
@@ -474,39 +489,6 @@ def get_schedule_actions_keyboard(schedule_id: int, location: str) -> InlineKeyb
 @app.route('/')
 def health_check():
     return "Bot is running", 200
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        update = types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return ''
-    return 'Bad request', 400
-
-@bot.message_handler(commands=['start', 'help'])
-def send_welcome(message: types.Message):
-    try:
-        user_id = message.from_user.id
-        now = datetime.now(TIMEZONE).isoformat()
-
-        if not db.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,), fetchone=True):
-            db.execute(
-                """INSERT INTO users 
-                (user_id, username, first_name, last_name, join_date, last_activity, reminders_enabled) 
-                VALUES (?, ?, ?, ?, ?, ?, 1)""",
-                (user_id, message.from_user.username, message.from_user.first_name,
-                 message.from_user.last_name or "", now, now)
-            )
-
-        bot.send_message(
-            message.chat.id,
-            "<b>🏆 Добро пожаловать в CrazyJump!</b>\n\nВыберите действие:",
-            reply_markup=get_main_menu(user_id)
-        )
-    except Exception as e:
-        logger.error(f"Welcome error: {e}")
-        bot.reply_to(message, "⚠️ Произошла ошибка. Пожалуйста, попробуйте позже.")
 
 @bot.message_handler(func=lambda m: m.text == "💳 Купить абонемент")
 def show_subscription_plans_handler(message: types.Message):
@@ -1631,7 +1613,7 @@ def setup_webhook():
             webhook_url = f"{WEBHOOK_URL}/webhook"
             bot.set_webhook(
                 url=webhook_url,
-                certificate=open('webhook_cert.pem', 'r') if os.path.exists('webhook_cert.pem') else None
+                certificate=open('webhook_cert.pem', 'rb') if os.path.exists('webhook_cert.pem') else None
             )
             logger.info(f"Webhook successfully set to: {webhook_url}")
             return True
