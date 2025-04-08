@@ -24,11 +24,11 @@ def index():
 @app.route('/webhook', methods=['POST'])
 def webhook():
     if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        logger.info(f"Parsed update: {update}")
-        update = types.Update.de_json(json_string)
+        json_str = request.get_data().decode('utf-8')
+        logger.info(f"Received update: {json_str}")  # Логирование полученного обновления
+        update = types.Update.de_json(json_str)
         bot.process_new_updates([update])
-        return '', 200
+    return '', 200
     return 'Invalid request', 400
 
 @bot.message_handler(commands=['start'])
