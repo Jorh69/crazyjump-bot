@@ -5,53 +5,43 @@ from dotenv import load_dotenv
 import telebot
 from telebot import types
 
-# Загружаем переменные окружения
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.getenv("PORT", 10000))
 
-# Логгирование
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("bot")
 
-# Flask-приложение
-app = Flask(__name__)
-
-# Инициализация бота
+app = Flask(name)
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 
-# Обработчик команды /ping
-@bot.message_handler(commands=["ping"])
-def handle_ping(message):
-    bot.reply_to(message, "🏓 Понг от тестового бота!")
+@bot.message_handler(commands=["start"])
+def start_handler(message):
+    bot.reply_to(message, "Привет! Я жив!")
 
-# Обработка webhook-запросов
+@bot.message_handler(commands=["ping"])
+def ping_handler(message):
+    bot.reply_to(message, "🏓 Понг!")
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     if request.headers.get("content-type") == "application/json":
-        json_str = request.get_data().decode("utf-8")
-        logger.info(f"[WEBHOOK] Update: {json_str}")
-        update = types.Update.de_json(json_str)
+        update = types.Update.de_json(request.get_data().decode("utf-8"))
+        logger.info(f"[WEBHOOK] Update: {update}")
         bot.process_new_updates([update])
     return '', 200
 
-# Проверка сервера
-@app.route("/", methods=["GET", "HEAD"])
+@app.route("/", methods=["GET"])
 def index():
-    return "Бот работает", 200
+    return "OK", 200
 
-# Установка webhook при старте
 def set_webhook():
     bot.remove_webhook()
-    success = bot.set_webhook(f"{WEBHOOK_URL}/webhook")
-    logger.info(f"Webhook установлен: {success}")
+    url = f"{WEBHOOK_URL}/webhook"
+    bot.set_webhook(url)
+    logger.info(f"Webhook установлен на {url}")
 
-if __name__ == "__main__":
-    if not TOKEN or not WEBHOOK_URL:
-        logger.error("Не указаны TELEGRAM_TOKEN или WEBHOOK_URL")
-        exit(1)
-
-    logger.info("Запуск бота...")
+if name == "main":
     set_webhook()
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+    app.run(host="0.0.0.0", port=PORT)
