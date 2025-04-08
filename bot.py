@@ -14,7 +14,7 @@ PORT = int(os.getenv("PORT", 10000))
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = Flask(name)
+app = Flask(__name__)
 bot = TeleBot(TOKEN, parse_mode='HTML')
 
 @app.route('/')
