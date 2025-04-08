@@ -34,6 +34,10 @@ def webhook():
 def handle_start(message):
     bot.send_message(message.chat.id, "✅ Вебхук работает! Бот запущен.")
 
+@bot.message_handler(commands=['test'])
+def test_handler(message):
+    bot.reply_to(message, "✅ Бот работает и получил команду /test!")
+
 if __name__ == '__main__':
     bot.remove_webhook()
     bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
