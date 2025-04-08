@@ -13,10 +13,10 @@ PORT = int(os.getenv("PORT", 10000))
 
 # Логгирование
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(name)
+logger = logging.getLogger(__name__)
 
 # Flask-приложение
-app = Flask(name)
+app = Flask(__name__)
 
 # Инициализация бота
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
