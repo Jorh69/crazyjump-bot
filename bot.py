@@ -47,7 +47,7 @@ def set_webhook():
     success = bot.set_webhook(f"{WEBHOOK_URL}/webhook")
     logger.info(f"Webhook установлен: {success}")
 
-if name == "main":
+if name == "__main__":
     if not TOKEN or not WEBHOOK_URL:
         logger.error("Не указаны TELEGRAM_TOKEN или WEBHOOK_URL")
         exit(1)
